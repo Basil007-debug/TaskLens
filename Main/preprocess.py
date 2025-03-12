@@ -1,65 +1,42 @@
-import nltk
-import json
+# preprocess.py
 import re
-import string
-
-# Download necessary NLTK resources
-nltk.download("punkt")
-nltk.download("stopwords")
-nltk.download("wordnet")
 
 class TextPreprocessor:
-    def __init__(self, text):
-        self.text = text
-        self.stop_words = set(nltk.corpus.stopwords.words('english'))
-        self.lemmatizer = nltk.stem.WordNetLemmatizer()
+    def clean_text(self, text):
+        """Cleans extracted text by removing unwanted characters and formatting issues."""
+        if not isinstance(text, str):
+            return ""
+        # Remove repeated nonsense (e.g., 'printf' spam)
+        text = re.sub(r'(\b\w+\b)(?:\s+\1)+', r'\1', text)
+        text = re.sub(r'\s+', ' ', text).strip()  # Normalize spaces
+        text = re.sub(r'[^\w\s.,!?]', '', text)  # Remove unwanted special characters
+        return text
 
-    def preprocess(self):
-        text = self.text.lower().translate(str.maketrans("", "", string.punctuation))  # Remove punctuation
-        tokens = nltk.word_tokenize(text)  # Tokenize words
-        tokens = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]  # Lemmatize & remove stopwords
-        
-        # Ensure readability by keeping important connecting words
-        meaningful_words = {"not", "is", "are", "does", "do", "was", "were", "has", "have"}
-        tokens = [token for token in tokens if token in meaningful_words or token not in self.stop_words]
+    def clean_code(self, code):
+        """Cleans code blocks by preserving structure while removing excess whitespace."""
+        if not isinstance(code, str):
+            return ""
+        code = re.sub(r'\n\s*\n', '\n', code.strip())
+        return code
 
-        return " ".join(tokens)  # Reconstruct the sentence properly
+    def preprocess(self, extracted_data):
+        """Preprocess extracted text and return cleaned data."""
+        if not isinstance(extracted_data, dict):
+            raise TypeError(f"Expected a dictionary but got {type(extracted_data)}")
 
-class CodePreprocessor:
-    def __init__(self, code):
-        self.code = code
+        processed_data = {
+            "text_descriptions": [],
+            "code_blocks": []
+        }
 
-    def preprocess(self):
-        code = re.sub(r"#.*", "", self.code)  # Remove comments
-        code = re.sub(r"\s+", " ", code).strip()  # Remove extra whitespace
-        
-        # Ensure proper formatting
-        return "\n".join([line.strip() for line in self.code.split(";")])  # Preserve line breaks
+        for text in extracted_data.get("text_descriptions", []):
+            cleaned_text = self.clean_text(text)
+            if cleaned_text:
+                processed_data["text_descriptions"].append(cleaned_text)
 
-class DataPreprocessor:
-    def __init__(self, input_file, output_file="cleaned_data.json"):
-        self.input_file = input_file
-        self.output_file = output_file
-        self.data = self.load_data()
+        for code in extracted_data.get("code_blocks", []):
+            cleaned_code = self.clean_code(code)
+            if cleaned_code:
+                processed_data["code_blocks"].append(cleaned_code)
 
-    def load_data(self):
-        with open(self.input_file, "r") as f:
-            data = json.load(f)
-        # Ensure required keys exist
-        data.setdefault("text_descriptions", [])
-        data.setdefault("code_blocks", [])
-        return data
-
-    def process(self):
-        self.data["text_descriptions"] = [TextPreprocessor(desc).preprocess() for desc in self.data["text_descriptions"]]
-        self.data["code_blocks"] = [CodePreprocessor(block).preprocess() for block in self.data["code_blocks"]]
-
-        with open(self.output_file, "w") as f:
-            json.dump(self.data, f, indent=4, ensure_ascii=False)
-
-        print(f"✅ Preprocessing complete! Data saved as '{self.output_file}'.")
-
-# Run the preprocessing if executed as a script
-if __name__ == "__main__":
-    preprocessor = DataPreprocessor("extracted_data.json")
-    preprocessor.process()
+        return processed_data

@@ -1,126 +1,118 @@
-# model_interface.py
-import os
+# model_inference.py
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from io import BytesIO
+import os
+import re
 
 class TaskEvaluator:
     def __init__(self):
-        """Initialize the Groq LLM via LangChain."""
         if "GROQ_API_KEY" not in os.environ:
             raise ValueError("GROQ_API_KEY environment variable not set.")
         
         self.llm = ChatGroq(
             model="llama-3.1-8b-instant",
-            temperature=0,
+            temperature=0.3,
             max_tokens=None,
             timeout=None,
             max_retries=2,
         )
 
-    def evaluate_task(self, task_content, criteria):
-        """
-        Evaluate the task content against given criteria using the LLM.
-        
-        Args:
-            task_content (str): The submitted task description or content.
-            criteria (str): The expected standards or requirements for the task.
-        
-        Returns:
-            dict: Evaluation results including feedback, metrics, and suggestions.
-        """
-        # Define the prompt template
+    def evaluate_task(self, question, text_descriptions, code_blocks=None):
+        """Evaluate an ML answer based on a question using the ML-specific prompt."""
+        code_blocks = code_blocks or []
+        answer_text = "\n".join(text_descriptions)
+        answer_code = "\n".join(code_blocks) if code_blocks else "No code provided."
+
+        content = (
+            f"QUESTION: {question}\n"
+            f"ANSWER TEXT: {answer_text}\n"
+            f"ANSWER CODE: {answer_code}"
+        )
+
+        system_prompt = (
+            "YOU ARE AN ML EVALUATION AGENT, TASKED WITH ASSESSING MACHINE LEARNING RESPONSES FOR MODEL SELECTION, EXPLAINABILITY, AND PERFORMANCE.\n\n"
+            "###### INSTRUCTIONS\n"
+            "- **CHECK MODEL SELECTION**: Ensure the chosen model is appropriate for the task.\n"
+            "- **VERIFY DATA PREPROCESSING**: Confirm data is properly cleaned and prepared.\n"
+            "- **ASSESS EXPLAINABILITY**: Evaluate if the model's decisions are interpretable.\n"
+            "- **CHECK PERFORMANCE METRICS**: Ensure relevant metrics (e.g., accuracy, F1) are reported.\n"
+            "- **PROVIDE ACTIONABLE FEEDBACK** for any errors or improvements.\n\n"
+            "###### STRUCTURED RESPONSE FORMAT\n"
+            "**ML Evaluation Report:**\n"
+            "- **Model Selection:** [Score: 0-10] [Explanation]\n"
+            "- **Data Preprocessing:** [Score: 0-10] [Explanation]\n"
+            "- **Explainability:** [Score: 0-10] [Explanation]\n"
+            "- **Performance Metrics:** [Score: 0-10] [Explanation]\n"
+            "- **Suggested Improvements:** [If applicable]"
+        )
+
         prompt = ChatPromptTemplate.from_messages(
             [
-                (
-                    "system",
-                    """
-                    You are an expert task evaluator. Evaluate the provided task submission based on the given criteria.
-                    Provide detailed feedback, a performance score (0-100), and suggestions for improvement.
-
-                    Format your response as follows:
-                    - Feedback: [Your detailed feedback]
-                    - Performance Score: [Score as a number between 0 and 100, e.g., 85]
-                    - Suggestions: [Your suggestions]
-                    """
-                ),
-                (
-                    "human",
-                    "Task Submission: {task_content}\nEvaluation Criteria: {criteria}"
-                ),
+                ("system", system_prompt),
+                ("human", "{content}")
             ]
         )
 
-        # Chain the prompt with the LLM
         chain = prompt | self.llm
+        response = chain.invoke({"content": content})
+        print("=== Raw LLM Response ===")
+        print(response.content)
+        print("=====================")
+        return self._parse_response(response.content)
 
-        # Invoke the chain with the inputs
-        response = chain.invoke({"task_content": task_content, "criteria": criteria})
+    def _parse_response(self, response_text):
+        """Parse LLM response into a structured dictionary."""
+        report = {
+            "model_selection": {"score": 0, "explanation": "Not evaluated."},
+            "data_preprocessing": {"score": 0, "explanation": "Not evaluated."},
+            "explainability": {"score": 0, "explanation": "Not evaluated."},
+            "performance_metrics": {"score": 0, "explanation": "Not evaluated."},
+            "suggestions": "No suggestions provided."
+        }
 
-        # Parse the response
-        try:
-            content = response.content
-            feedback_start = content.index("Feedback:") + len("Feedback:")
-            score_start = content.index("Performance Score:") + len("Performance Score:")
-            suggestions_start = content.index("Suggestions:") + len("Suggestions:")
+        # Relaxed regex to handle potential formatting issues
+        model_selection = re.search(r"Model Selection:\s*\[Score:\s*(\d+)\]\s*\[(.*?)\](?=(Data Preprocessing:|$))", response_text, re.DOTALL)
+        data_preprocessing = re.search(r"Data Preprocessing:\s*\[Score:\s*(\d+)\]\s*\[(.*?)\](?=(Explainability:|$))", response_text, re.DOTALL)
+        explainability = re.search(r"Explainability:\s*\[Score:\s*(\d+)\]\s*\[(.*?)\](?=(Performance Metrics:|$))", response_text, re.DOTALL)
+        performance_metrics = re.search(r"Performance Metrics:\s*\[Score:\s*(\d+)\]\s*\[(.*?)\](?=(Suggested Improvements:|$))", response_text, re.DOTALL)
+        suggestions = re.search(r"Suggested Improvements:\s*\[(.*?)\](?=$)", response_text, re.DOTALL)
 
-            feedback = content[feedback_start:content.index("Performance Score:")].strip()
-            score_str = content[score_start:content.index("Suggestions:")].strip()
-            suggestions = content[suggestions_start:].strip()
+        if model_selection:
+            report["model_selection"] = {"score": int(model_selection.group(1)), "explanation": model_selection.group(2).strip()}
+        if data_preprocessing:
+            report["data_preprocessing"] = {"score": int(data_preprocessing.group(1)), "explanation": data_preprocessing.group(2).strip()}
+        if explainability:
+            report["explainability"] = {"score": int(explainability.group(1)), "explanation": explainability.group(2).strip()}
+        if performance_metrics:
+            report["performance_metrics"] = {"score": int(performance_metrics.group(1)), "explanation": performance_metrics.group(2).strip()}
+        if suggestions:
+            report["suggestions"] = suggestions.group(1).strip()
 
-            # Handle score parsing (e.g., "85/100" or "85")
-            if '/' in score_str:
-                score = int(score_str.split('/')[0])  # Extract the numerator
-            else:
-                score = int(score_str)  # Direct integer
+        return report
 
-            return {
-                "feedback": feedback,
-                "performance_score": score,
-                "suggestions": suggestions
-            }
-        except Exception as e:
-            raise ValueError(f"Error parsing LLM response: {e}")
-
-    def generate_pdf_report(self, evaluation_result, output_path="task_evaluation_report.pdf"):
-        """
-        Generate a PDF report from the evaluation result.
-        
-        Args:
-            evaluation_result (dict): The result from evaluate_task.
-            output_path (str): Path to save the PDF.
-        """
-        doc = SimpleDocTemplate(output_path, pagesize=letter)
+    def generate_pdf_report(self, evaluation_result):
+        """Generate PDF report in memory."""
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
         styles = getSampleStyleSheet()
         story = []
 
-        story.append(Paragraph("Task Evaluation Report", styles["Title"]))
+        story.append(Paragraph("ML Evaluation Report", styles["Title"]))
         story.append(Spacer(1, 12))
-
-        story.append(Paragraph("Feedback:", styles["Heading2"]))
-        story.append(Paragraph(evaluation_result["feedback"], styles["BodyText"]))
-        story.append(Spacer(1, 12))
-
-        story.append(Paragraph(f"Performance Score: {evaluation_result['performance_score']}/100", styles["Heading2"]))
-        story.append(Spacer(1, 12))
-
-        story.append(Paragraph("Suggestions for Improvement:", styles["Heading2"]))
-        story.append(Paragraph(evaluation_result["suggestions"], styles["BodyText"]))
+        story.append(Paragraph(f"Model Selection: [Score: {evaluation_result['model_selection']['score']}/10] {evaluation_result['model_selection']['explanation']}", styles["BodyText"]))
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"Data Preprocessing: [Score: {evaluation_result['data_preprocessing']['score']}/10] {evaluation_result['data_preprocessing']['explanation']}", styles["BodyText"]))
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"Explainability: [Score: {evaluation_result['explainability']['score']}/10] {evaluation_result['explainability']['explanation']}", styles["BodyText"]))
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"Performance Metrics: [Score: {evaluation_result['performance_metrics']['score']}/10] {evaluation_result['performance_metrics']['explanation']}", styles["BodyText"]))
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"Suggested Improvements: {evaluation_result['suggestions']}", styles["BodyText"]))
 
         doc.build(story)
-        return output_path
-
-
-if __name__ == "__main__":
-    import getpass
-    if "GROQ_API_KEY" not in os.environ:
-        os.environ["GROQ_API_KEY"] = getpass.getpass("Enter your Groq API key: ")
-
-    evaluator = TaskEvaluator()
-    task_content = "Completed the project with all features implemented but missed the deadline."
-    criteria = "Complete all features on time with high quality."
-    result = evaluator.evaluate_task(task_content, criteria)
-    pdf_path = evaluator.generate_pdf_report(result, "test_report.pdf")
-    print(f"PDF report generated at: {pdf_path}")
+        buffer.seek(0)
+        return buffer
