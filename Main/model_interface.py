@@ -62,7 +62,11 @@ class TaskEvaluator:
         print("=== Raw LLM Response ===")
         print(response.content)
         print("=====================")
-        return self._parse_response(response.content)
+        parsed_response = self._parse_response(response.content)
+        return {
+            "parsed": parsed_response,
+            "raw": response.content
+        }
 
     def _parse_response(self, response_text):
         """Parse LLM response into a structured dictionary."""
@@ -95,24 +99,28 @@ class TaskEvaluator:
         return report
 
     def generate_pdf_report(self, evaluation_result):
-        """Generate PDF report in memory."""
+        """Generate PDF report in memory with improved formatting."""
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter)
         styles = getSampleStyleSheet()
+        
+        # Create custom styles
+        title_style = styles["Title"]
+        heading_style = styles["Heading2"]
+        body_style = styles["BodyText"]
+        
         story = []
-
-        story.append(Paragraph("ML Evaluation Report", styles["Title"]))
-        story.append(Spacer(1, 12))
-        story.append(Paragraph(f"Model Selection: [Score: {evaluation_result['model_selection']['score']}/10] {evaluation_result['model_selection']['explanation']}", styles["BodyText"]))
+        
+        # Title
+        story.append(Paragraph("ML Evaluation Report", title_style))
+        story.append(Spacer(1, 20))
+        
+        # Raw LLM Response Section
+        story.append(Paragraph("Raw LLM Response", heading_style))
         story.append(Spacer(1, 6))
-        story.append(Paragraph(f"Data Preprocessing: [Score: {evaluation_result['data_preprocessing']['score']}/10] {evaluation_result['data_preprocessing']['explanation']}", styles["BodyText"]))
-        story.append(Spacer(1, 6))
-        story.append(Paragraph(f"Explainability: [Score: {evaluation_result['explainability']['score']}/10] {evaluation_result['explainability']['explanation']}", styles["BodyText"]))
-        story.append(Spacer(1, 6))
-        story.append(Paragraph(f"Performance Metrics: [Score: {evaluation_result['performance_metrics']['score']}/10] {evaluation_result['performance_metrics']['explanation']}", styles["BodyText"]))
-        story.append(Spacer(1, 6))
-        story.append(Paragraph(f"Suggested Improvements: {evaluation_result['suggestions']}", styles["BodyText"]))
-
+        story.append(Paragraph(evaluation_result['raw'], body_style))  # Display the raw response in the PDF
+        story.append(Spacer(1, 20))
+        
         doc.build(story)
         buffer.seek(0)
         return buffer

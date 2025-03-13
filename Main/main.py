@@ -54,8 +54,31 @@ if st.button("Evaluate Answer"):
                 preprocessed_data["code_blocks"]
             )
 
-            # Step 4: Generate PDF report
-            pdf_buffer = evaluator.generate_pdf_report(result)
+            # Display formatted raw LLM response
+            st.subheader("Evaluation Results")
+            raw_response = result["raw"]
+            
+            # Create expandable sections for different parts of the evaluation
+            with st.expander("📊 Detailed Evaluation", expanded=True):
+                # Split the response into sections and format them
+                sections = raw_response.split('\n\n')
+                for section in sections:
+                    if section.strip():
+                        # Format headers
+                        if section.startswith('#'):
+                            st.markdown(section)
+                        # Format lists
+                        elif section.startswith('- '):
+                            st.markdown(section)
+                        # Format regular paragraphs
+                        else:
+                            st.write(section)
+
+            # Generate PDF report using both parsed results and raw response
+            pdf_buffer = evaluator.generate_pdf_report({
+                "parsed": result["parsed"],
+                "raw": result["raw"]
+            })
 
             # # Display results
             # st.subheader("ML Evaluation Report")
@@ -68,7 +91,6 @@ if st.button("Evaluate Answer"):
             print(result)
             print("++++++++++++++++++++++++")
 
-            st.write(result)
 
             # Provide download button for report
             st.download_button(

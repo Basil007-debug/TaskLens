@@ -9,7 +9,8 @@ class PDFExtractor:
         self.pdf_file = pdf_file
         self.output = {
             "code_blocks": [],
-            "text_descriptions": []
+            "text_descriptions": [],
+            "plots":[]
         }
 
     def is_code_line(self, line):
